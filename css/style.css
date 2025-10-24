@@ -6,7 +6,7 @@
 
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: url('A_monochromatic_background_inspired_by_Jeppesen_en.png') no-repeat center center fixed;
+    background: url('/images/A_monochromatic_background_inspired_by_Jeppesen_en_webp.webp') no-repeat center center fixed;
     background-size: cover;
     min-height: 100vh;
     padding: 0;
