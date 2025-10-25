@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dopasowanie Map v0.6</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .upload-section {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .upload-box {
+            flex: 1;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .upload-box input {
+            margin-top: 10px;
+        }
+        
+        .instructions {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196F3;
+        }
+        
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            height: 600px;
+            border: 2px solid #333;
+            overflow: hidden;
+            background: #fff;
+            cursor: crosshair;
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        .point {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: red;
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        .point-label {
+            position: absolute;
+            background: red;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            transform: translate(-50%, -200%);
+            pointer-events: none;
+            z-index: 11;
+        }
+        
+        .controls {
+            margin-top: 15px;
+            text-align: center;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+        
+        button:hover {
+            background: #1976D2;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            color: #2196F3;
+            margin-top: 15px;
+            min-height: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Dopasowanie Map PDF v0.6</h1>
+        
+        <div class="upload-section">
+            <div class="upload-box">
+                <h3>Mapa 1 (pierwsza)</h3>
+                <input type="file" id="pdf1" accept="application/pdf">
+            </div>
+            <div class="upload-box">
+                <h3>Mapa 2 (druga)</h3>
+                <input type="file" id="pdf2" accept="application/pdf">
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <strong>Instrukcja:</strong> Wczytaj oba pliki PDF, a następnie kliknij 4 charakterystyczne punkty na pierwszej mapie, potem na drugiej. Możesz przytrzymać mysz i przeciągać aby przesunąć mapę, lub użyć scrolla do przybliżania (max 15x). Mapy zostaną dopasowane i będą migać na przemian.
+        </div>
+        
+        <div class="status" id="status">Wczytaj oba pliki PDF, aby rozpocząć</div>
+        
+        <div class="canvas-container" id="canvasContainer">
+            <canvas id="mainCanvas"></canvas>
+        </div>
+        
+        <div class="controls">
+            <button id="resetBtn" disabled>Resetuj punkty</button>
+            <button id="zoomInBtn" disabled>Przybliż (+)</button>
+            <button id="zoomOutBtn" disabled>Oddal (-)</button>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        const state = {
+            pdf1: null,
+            pdf2: null,
+            pdf1Page: null,
+            pdf2Page: null,
+            points1: [], // Punkty w koordynatach PDF (x, y względem PDF)
+            points2: [], // Punkty w koordynatach PDF (x, y względem PDF)
+            currentStep: 'upload',
+            scale: 1,
+            offsetX: 0,
+            offsetY: 0,
+            animationInterval: null,
+            isDragging: false,
+            dragStartX: 0,
+            dragStartY: 0,
+            lastOffsetX: 0,
+            lastOffsetY: 0,
+            // Cache dla płynnego renderowania
+            cachedCanvas: null,
+            cachedScale: 0
+        };
+        
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvasContainer');
+        const status = document.getElementById('status');
+        
+        // Ustawienie rozmiaru canvas
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            redraw();
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Wczytywanie PDF
+        document.getElementById('pdf1').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const arrayBuffer = await file.arrayBuffer();
+                state.pdf1 = await pdfjsLib.getDocument(arrayBuffer).promise;
+                state.pdf1Page = await state.pdf1.getPage(1);
+                checkReady();
+            }
+        });
+        
+        document.getElementById('pdf2').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const arrayBuffer = await file.arrayBuffer();
+                state.pdf2 = await pdfjsLib.getDocument(arrayBuffer).promise;
+                state.pdf2Page = await state.pdf2.getPage(1);
+                checkReady();
+            }
+        });
+        
+        function checkReady() {
+            if (state.pdf1Page && state.pdf2Page && state.currentStep === 'upload') {
+                startMap1Selection();
+            }
+        }
+        
+        function startMap1Selection() {
+            state.currentStep = 'map1';
+            state.points1 = [];
+            state.scale = 1;
+            state.offsetX = 0;
+            state.offsetY = 0;
+            state.cachedScale = 0; // Wymuś przerenderowanie cache
+            status.textContent = 'Kliknij 4 punkty na pierwszej mapie (punkt 1/4)';
+            document.getElementById('resetBtn').disabled = false;
+            document.getElementById('zoomInBtn').disabled = false;
+            document.getElementById('zoomOutBtn').disabled = false;
+            redraw();
+        }
+        
+        function startMap2Selection() {
+            state.currentStep = 'map2';
+            state.points2 = [];
+            state.scale = 1;
+            state.offsetX = 0;
+            state.offsetY = 0;
+            state.cachedScale = 0; // Wymuś przerenderowanie cache
+            clearPointMarkers();
+            status.textContent = 'Kliknij 4 punkty na drugiej mapie (punkt 1/4)';
+            redraw();
+        }
+        
+        function startPreview() {
+            state.currentStep = 'preview';
+            clearPointMarkers(); // Usuń wszystkie punkty przed preview
+            status.textContent = 'Dopasowanie zakończone - mapy migają na przemian';
+            document.getElementById('resetBtn').disabled = false;
+            document.getElementById('zoomInBtn').disabled = true;
+            document.getElementById('zoomOutBtn').disabled = true;
+            
+            // Przygotuj cache dla obu map do szybkiego migania
+            preparePreviewCache();
+        }
+        
+        // Przygotowanie cache dla preview - renderuj obie mapy raz
+        let previewCache1 = null;
+        let previewCache2 = null;
+        
+        async function preparePreviewCache() {
+            // Renderuj mapę 1
+            const viewport1 = state.pdf1Page.getViewport({ scale: 1 });
+            previewCache1 = document.createElement('canvas');
+            previewCache1.width = viewport1.width;
+            previewCache1.height = viewport1.height;
+            const ctx1 = previewCache1.getContext('2d');
+            ctx1.fillStyle = 'white';
+            ctx1.fillRect(0, 0, viewport1.width, viewport1.height);
+            await state.pdf1Page.render({
+                canvasContext: ctx1,
+                viewport: viewport1
+            }).promise;
+            
+            // Renderuj mapę 2 z transformacją
+            const viewport2 = state.pdf2Page.getViewport({ scale: 1 });
+            previewCache2 = document.createElement('canvas');
+            previewCache2.width = canvas.width;
+            previewCache2.height = canvas.height;
+            const ctx2 = previewCache2.getContext('2d');
+            
+            const transform = calculateTransform(state.points2, state.points1);
+            ctx2.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+            await state.pdf2Page.render({
+                canvasContext: ctx2,
+                viewport: viewport2
+            }).promise;
+            ctx2.setTransform(1, 0, 0, 1, 0, 0); // Reset transformacji
+            
+            // Zacznij miganie
+            let showMap1 = true;
+            state.animationInterval = setInterval(() => {
+                showMap1 = !showMap1;
+                redrawPreview(showMap1);
+            }, 500);
+        }
+        
+        // Główna funkcja rysowania
+        async function redraw() {
+            const page = state.currentStep === 'map1' ? state.pdf1Page : state.pdf2Page;
+            if (!page) return;
+            
+            // Jeśli scale się zmienił, przerenderuj cache
+            if (state.cachedScale !== state.scale) {
+                await renderToCache(page);
+            }
+            
+            // Upewnij się że cache istnieje
+            if (!state.cachedCanvas) {
+                await renderToCache(page);
+            }
+            
+            // Wyczyść canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Rysuj z cache (bardzo szybkie)
+            drawFromCache();
+            
+            // Rysuj punkty
+            const points = state.currentStep === 'map1' ? state.points1 : state.points2;
+            drawPoints(points, page);
+        }
+        
+        // Renderowanie PDF do cache (wolne, ale rzadkie)
+        async function renderToCache(page) {
+            const viewport = page.getViewport({ scale: state.scale });
+            
+            // Stwórz nowy offscreen canvas jako cache
+            state.cachedCanvas = document.createElement('canvas');
+            state.cachedCanvas.width = viewport.width;
+            state.cachedCanvas.height = viewport.height;
+            const cacheCtx = state.cachedCanvas.getContext('2d');
+            
+            // Wypełnij białym tłem
+            cacheCtx.fillStyle = 'white';
+            cacheCtx.fillRect(0, 0, viewport.width, viewport.height);
+            
+            try {
+                await page.render({
+                    canvasContext: cacheCtx,
+                    viewport: viewport
+                }).promise;
+                
+                state.cachedScale = state.scale;
+            } catch (error) {
+                console.error('Błąd renderowania PDF:', error);
+                state.cachedScale = 0; // Wymuś ponowne renderowanie
+            }
+        }
+        
+        // Rysowanie z cache (szybkie)
+        function drawFromCache() {
+            if (!state.cachedCanvas) return;
+            
+            const x = (canvas.width - state.cachedCanvas.width) / 2 + state.offsetX;
+            const y = (canvas.height - state.cachedCanvas.height) / 2 + state.offsetY;
+            
+            ctx.drawImage(state.cachedCanvas, x, y);
+        }
+        
+        // Rysowanie punktów
+        function drawPoints(points, page) {
+            clearPointMarkers();
+            
+            const viewport = page.getViewport({ scale: state.scale });
+            const x = (canvas.width - viewport.width) / 2 + state.offsetX;
+            const y = (canvas.height - viewport.height) / 2 + state.offsetY;
+            
+            points.forEach((point, index) => {
+                // Przekonwertuj punkt z koordynatów PDF na koordynaty canvas
+                const canvasX = x + point.x * state.scale;
+                const canvasY = y + point.y * state.scale;
+                
+                const marker = document.createElement('div');
+                marker.className = 'point';
+                marker.style.left = canvasX + 'px';
+                marker.style.top = canvasY + 'px';
+                
+                const label = document.createElement('div');
+                label.className = 'point-label';
+                label.textContent = (index + 1);
+                label.style.left = canvasX + 'px';
+                label.style.top = canvasY + 'px';
+                
+                container.appendChild(marker);
+                container.appendChild(label);
+            });
+        }
+        
+        function clearPointMarkers() {
+            document.querySelectorAll('.point, .point-label').forEach(el => el.remove());
+        }
+        
+        // Konwersja kliknięcia canvas na koordynaty PDF
+        function canvasToPDFCoords(canvasX, canvasY, page) {
+            const viewport = page.getViewport({ scale: state.scale });
+            const x = (canvas.width - viewport.width) / 2 + state.offsetX;
+            const y = (canvas.height - viewport.height) / 2 + state.offsetY;
+            
+            // Odejmij offset i podziel przez scale
+            const pdfX = (canvasX - x) / state.scale;
+            const pdfY = (canvasY - y) / state.scale;
+            
+            return { x: pdfX, y: pdfY };
+        }
+        
+        // Obsługa myszy
+        let isMouseDown = false;
+        
+        canvas.addEventListener('mousedown', (e) => {
+            if (state.currentStep === 'map1' || state.currentStep === 'map2') {
+                isMouseDown = true;
+                state.isDragging = false;
+                const rect = canvas.getBoundingClientRect();
+                state.dragStartX = e.clientX - rect.left;
+                state.dragStartY = e.clientY - rect.top;
+                state.lastOffsetX = state.offsetX;
+                state.lastOffsetY = state.offsetY;
+                canvas.style.cursor = 'grabbing';
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (isMouseDown && (state.currentStep === 'map1' || state.currentStep === 'map2')) {
+                const rect = canvas.getBoundingClientRect();
+                const currentX = e.clientX - rect.left;
+                const currentY = e.clientY - rect.top;
+                
+                const deltaX = currentX - state.dragStartX;
+                const deltaY = currentY - state.dragStartY;
+                
+                // Jeśli poruszył się o więcej niż 3 piksele, to przeciąganie
+                if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+                    state.isDragging = true;
+                }
+                
+                if (state.isDragging) {
+                    state.offsetX = state.lastOffsetX + deltaX;
+                    state.offsetY = state.lastOffsetY + deltaY;
+                    
+                    // Rysuj tylko z cache (bez re-renderowania PDF)
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#f0f0f0';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    drawFromCache();
+                    
+                    const page = state.currentStep === 'map1' ? state.pdf1Page : state.pdf2Page;
+                    const points = state.currentStep === 'map1' ? state.points1 : state.points2;
+                    drawPoints(points, page);
+                }
+            }
+        });
+        
+        canvas.addEventListener('mouseup', (e) => {
+            if (state.currentStep === 'map1' || state.currentStep === 'map2') {
+                isMouseDown = false;
+                canvas.style.cursor = 'crosshair';
+                
+                // Jeśli to było kliknięcie (nie przeciąganie), dodaj punkt
+                if (!state.isDragging) {
+                    const rect = canvas.getBoundingClientRect();
+                    const canvasX = e.clientX - rect.left;
+                    const canvasY = e.clientY - rect.top;
+                    
+                    const page = state.currentStep === 'map1' ? state.pdf1Page : state.pdf2Page;
+                    const pdfCoords = canvasToPDFCoords(canvasX, canvasY, page);
+                    
+                    if (state.currentStep === 'map1') {
+                        state.points1.push(pdfCoords);
+                        redraw(); // Przerysuj z nowymi punktami
+                        
+                        if (state.points1.length < 4) {
+                            status.textContent = `Kliknij punkt ${state.points1.length + 1}/4 na pierwszej mapie`;
+                        } else {
+                            status.textContent = 'Punkty na pierwszej mapie zaznaczone!';
+                            setTimeout(startMap2Selection, 500);
+                        }
+                    } else if (state.currentStep === 'map2') {
+                        state.points2.push(pdfCoords);
+                        redraw(); // Przerysuj z nowymi punktami
+                        
+                        if (state.points2.length < 4) {
+                            status.textContent = `Kliknij punkt ${state.points2.length + 1}/4 na drugiej mapie`;
+                        } else {
+                            status.textContent = 'Punkty na drugiej mapie zaznaczone!';
+                            setTimeout(startPreview, 500);
+                        }
+                    }
+                }
+                
+                state.isDragging = false;
+            }
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            isMouseDown = false;
+            state.isDragging = false;
+            canvas.style.cursor = 'crosshair';
+        });
+        
+        // Zoom scrollem - przybliża do kursora (zwiększony limit do 15x)
+        canvas.addEventListener('wheel', (e) => {
+            if (state.currentStep === 'map1' || state.currentStep === 'map2') {
+                e.preventDefault();
+                
+                // Pozycja kursora względem canvas
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Stary scale
+                const oldScale = state.scale;
+                
+                // Zmień scale
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                state.scale *= delta;
+                state.scale = Math.max(0.5, Math.min(15, state.scale));
+                
+                // Nowy scale
+                const scaleChange = state.scale / oldScale;
+                
+                // Oblicz nowy offset tak, żeby punkt pod kursorem nie przesunął się
+                // offset + mouseX powinno być skalowane o scaleChange względem centrum canvas
+                state.offsetX = mouseX - (mouseX - state.offsetX) * scaleChange;
+                state.offsetY = mouseY - (mouseY - state.offsetY) * scaleChange;
+                
+                redraw();
+            }
+        });
+        
+        // Przyciski zoom
+        document.getElementById('zoomInBtn').addEventListener('click', () => {
+            state.scale *= 1.2;
+            state.scale = Math.min(15, state.scale);
+            redraw();
+        });
+        
+        document.getElementById('zoomOutBtn').addEventListener('click', () => {
+            state.scale *= 0.8;
+            state.scale = Math.max(0.5, state.scale);
+            redraw();
+        });
+        
+        // Reset
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            if (state.animationInterval) {
+                clearInterval(state.animationInterval);
+                state.animationInterval = null;
+            }
+            clearPointMarkers();
+            startMap1Selection();
+        });
+        
+        // Podgląd z dopasowaniem - używa cache dla płynności
+        function redrawPreview(showMap1) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (showMap1 && previewCache1) {
+                // Rysuj mapę 1 wycentrowaną
+                const x = (canvas.width - previewCache1.width) / 2;
+                const y = (canvas.height - previewCache1.height) / 2;
+                ctx.drawImage(previewCache1, x, y);
+            } else if (!showMap1 && previewCache2) {
+                // Rysuj mapę 2 (już z transformacją)
+                ctx.drawImage(previewCache2, 0, 0);
+            }
+        }
+        
+        // Obliczanie transformacji affine
+        function calculateTransform(srcPoints, dstPoints) {
+            // Używamy prostej transformacji affine na podstawie pierwszych 3 punktów
+            const src = srcPoints.slice(0, 3);
+            const dst = dstPoints.slice(0, 3);
+            
+            // Kompensacja przesunięcia canvas dla mapy 1
+            const viewport1 = state.pdf1Page.getViewport({ scale: 1 });
+            const offsetX1 = (canvas.width - viewport1.width) / 2;
+            const offsetY1 = (canvas.height - viewport1.height) / 2;
+            
+            // Punkty są już w koordynatach PDF, tylko dodajemy offset dla wyświetlenia
+            const srcNorm = src.map(p => ({ x: p.x, y: p.y }));
+            const dstNorm = dst.map(p => ({ x: p.x, y: p.y }));
+            
+            // Oblicz transformację affine
+            const x1 = srcNorm[0].x, y1 = srcNorm[0].y;
+            const x2 = srcNorm[1].x, y2 = srcNorm[1].y;
+            const x3 = srcNorm[2].x, y3 = srcNorm[2].y;
+            
+            const u1 = dstNorm[0].x, v1 = dstNorm[0].y;
+            const u2 = dstNorm[1].x, v2 = dstNorm[1].y;
+            const u3 = dstNorm[2].x, v3 = dstNorm[2].y;
+            
+            const denom = (x1 - x3) * (y2 - y3) - (x2 - x3) * (y1 - y3);
+            
+            const a = ((u1 - u3) * (y2 - y3) - (u2 - u3) * (y1 - y3)) / denom;
+            const b = ((x1 - x3) * (u2 - u3) - (x2 - x3) * (u1 - u3)) / denom;
+            const c = ((v1 - v3) * (y2 - y3) - (v2 - v3) * (y1 - y3)) / denom;
+            const d = ((x1 - x3) * (v2 - v3) - (x2 - x3) * (v1 - v3)) / denom;
+            
+            const e = u3 - a * x3 - b * y3 + offsetX1;
+            const f = v3 - c * x3 - d * y3 + offsetY1;
+            
+            return { a, b, c, d, e, f };
+        }
+    </script>
+</body>
+</html>

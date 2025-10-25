@@ -1,0 +1,165 @@
+@charset "UTF-8";
+
+/**
+ * main.css v1.0.0
+ * JeppCMPR - Glowne style aplikacji
+ * 
+ * Zawiera:
+ * - Reset CSS i zmienne
+ * - Layout glowny (header, container)
+ * - Style podstawowe (przyciski, formularze)
+ * - Motywy kolorystyczne
+ */
+
+/* ==================== RESET CSS ==================== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* ==================== BODY & BACKGROUND ==================== */
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: url('A_monochromatic_background_inspired_by_Jeppesen_en.png') no-repeat center center fixed;
+    background-size: cover;
+    min-height: 100vh;
+    padding: 0;
+    margin: 0;
+    position: relative;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+body::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 150%;
+    background: black;
+    opacity: 0.8;
+    pointer-events: none;
+    z-index: -1;
+}
+
+/* ==================== CONTAINER ==================== */
+.container {
+    max-width: 100%;
+    margin: 0;
+    background: rgba(43, 43, 59, 0.5);
+    border-radius: 0;
+    box-shadow: none;
+    overflow: hidden;
+    min-height: 100vh;
+}
+
+/* ==================== HEADER ==================== */
+.header {
+    background: rgba(0, 86, 214, 0.9);
+    color: white;
+    padding: 20px 30px;
+    text-align: center;
+    position: relative;
+    margin: 0;
+    border-radius: 0;
+}
+
+.header h1 {
+    font-size: 1.8em;
+    margin-bottom: 5px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.header p {
+    font-size: 0.9em;
+    opacity: 0.9;
+}
+
+.version-badge {
+    position: absolute;
+    top: 10px;
+    right: 20px;
+    background: rgba(255,255,255,0.2);
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-size: 0.9em;
+}
+
+/* ==================== BUTTONS ==================== */
+.btn {
+    padding: 16px 40px;
+    font-size: 1.15em;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-weight: 600;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.btn-primary {
+    background: rgba(0, 86, 214, 0.9);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: rgba(0, 68, 179, 0.9);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+}
+
+.btn-secondary {
+    background: rgba(60, 60, 79, 0.8);
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: rgba(60, 60, 79, 1);
+}
+
+/* ==================== UPLOAD SECTION ==================== */
+.upload-section {
+    padding: 40px;
+    text-align: center;
+    background: transparent;
+}
+
+.drop-zone {
+    border: 3px dashed rgba(0, 86, 214, 0.8);
+    border-radius: 15px;
+    padding: 60px 40px;
+    background: rgba(43, 43, 59, 0.9);
+    transition: all 0.3s ease;
+    cursor: pointer;
+    margin-bottom: 30px;
+}
+
+.drop-zone:hover, .drop-zone.drag-over {
+    background: rgba(60, 60, 79, 0.9);
+    border-color: rgba(0, 86, 214, 1);
+    transform: scale(1.02);
+}
+
+.drop-zone-icon {
+    font-size: 4em;
+    margin-bottom: 20px;
+}
+
+.drop-zone-text {
+    font-size: 1.3em;
+    color: rgba(0, 86, 214, 1);
+    margin-bottom: 10px;
+    font-weight: bold;
+}
+
+.drop-zone-hint {
+    color: #ccc;
+    font-size: 0.95em;
+}
