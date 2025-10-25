@@ -876,7 +876,44 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                 setTimeout(() => {
                     toggleAutoMode();
                 }, 500);
+
+                // OPTYMALIZACJA: Uruchom renderowanie w tle dla wszystkich par
+                console.log('🚀 Uruchamiam renderowanie w tle dla "Pixel Diff"...');
+                for (let i = 0; i < pdfPairs.length; i++) {
+                    enqueuePixelDiffRender(i);
+                }
             }
+        }
+        
+        // OPTYMALIZACJA: Kolejka do renderowania w tle
+        let pixelDiffRenderQueue = [];
+        let isRenderingQueue = false;
+
+        async function processPixelDiffRenderQueue() {
+            if (isRenderingQueue || pixelDiffRenderQueue.length === 0) return;
+            isRenderingQueue = true;
+
+            const { pairIndex, resolve } = pixelDiffRenderQueue.shift();
+            console.log(`[BG Render] Rozpoczynam renderowanie canvasów dla pary ${pairIndex}...`);
+            
+            await prepareCanvasesForPixelDiff(pairIndex);
+            
+            console.log(`[BG Render] Ukończono renderowanie dla pary ${pairIndex}. Pozostało w kolejce: ${pixelDiffRenderQueue.length}`);
+            resolve();
+
+            isRenderingQueue = false;
+            // Uruchom następne zadanie z małym opóźnieniem, aby nie blokować UI
+            setTimeout(processPixelDiffRenderQueue, 100);
+        }
+
+        // Ta funkcja będzie teraz dodawać zadanie do kolejki
+        function enqueuePixelDiffRender(pairIndex) {
+            return new Promise(resolve => {
+                pixelDiffRenderQueue.push({ pairIndex, resolve });
+                if (!isRenderingQueue) {
+                    processPixelDiffRenderQueue();
+                }
+            });
         }
 
         // FIX #2: MAXIMUM FRAME ALIGNMENT with JeppALLIGN v3.18 logic
@@ -2225,7 +2262,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
             });
         }
 
-        function comparePixels(oldCanvas, newCanvas, pageNum) {
+        function comparePixels(oldCanvas, newCanvas, pageNum, diffOverlayCanvas) {
             const differences = [];
             const sensitivityValue = document.getElementById('sensitivityRange').value;
             
@@ -2249,11 +2286,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
             const width = Math.min(oldCanvas.width, newCanvas.width);
             const height = Math.min(oldCanvas.height, newCanvas.height);
             
-            // Tworzymy nowy canvas z różnicami - bezpośrednie kolorowanie
-            const diffCanvas = document.createElement('canvas');
-            diffCanvas.width = width;
-            diffCanvas.height = height;
-            const diffCtx = diffCanvas.getContext('2d');
+            // OPTYMALIZACJA: Użyj istniejącego canvasa overlay
+            diffOverlayCanvas.width = width;
+            diffOverlayCanvas.height = height;
+            const diffCtx = diffOverlayCanvas.getContext('2d');
             const diffData = diffCtx.createImageData(width, height);
             
             let differenceCount = 0;
@@ -2403,7 +2439,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                 });
                 
                 // Wstaw zmodyfikowane dane
-                diffCtx.putImageData(finalDiffData, 0, 0);
+                diffCtx.putImageData(finalDiffData, 0, 0); // Rysuj na przekazanym canvasie
             }
             
             // Zwracamy informację o różnicach
@@ -2415,7 +2451,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                     y: 0,
                     width: width,
                     height: height,
-                    diffCanvas: diffCanvas,  // Canvas z różnicami
                     diffCount: differenceCount,
                     totalPixels: width * height,
                     percentage: (differenceCount / (width * height)) * 100,
@@ -2469,6 +2504,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                 hybridBtn.classList.toggle('active', mode === 'hybrid');
                 sensitivityControl.style.display = mode === 'hybrid' ? 'block' : 'none';
                 await renderOCROverlay();
+            }
+
+            if (ocrMode === 'hybrid') {
+                document.getElementById('pixelDiffOverlay').style.display = 'block';
             }
         }
 
@@ -2551,42 +2590,25 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
             container.style.zIndex = '998';
             
             if (ocrMode === 'hybrid') {
-                const pair = pdfPairs[currentPairIndex];
+                // Pokaż overlay
+                const diffOverlay = document.getElementById('pixelDiffOverlay');
+                diffOverlay.style.display = 'block';
                 
-                const loadingText = document.createElement('div');
-                loadingText.style.position = 'absolute';
-                loadingText.style.top = '10px';
-                loadingText.style.left = '10px';
-                loadingText.style.color = '#ffa500';
-                loadingText.style.fontSize = '20px';
-                loadingText.style.fontWeight = 'bold';
-                loadingText.style.background = 'rgba(0,0,0,0.8)';
-                loadingText.style.padding = '10px';
-                loadingText.style.borderRadius = '5px';
-                loadingText.textContent = 'Obliczam pixel diff...';
-                loadingText.classList.add('pixel-diff-loading');
-                container.appendChild(loadingText);
-                
-                recalculatePixelDiff(pair, currentPage).then(pixelDiffs => {
-                    container.querySelectorAll('.pixel-diff-loading').forEach(el => el.remove());
-                    
-                    if (pixelDiffs.length > 0 && pixelDiffs[0].diffCanvas) {
-                        const diff = pixelDiffs[0];
-                        const diffCanvas = diff.diffCanvas;
-                        
-                        // Dodaj canvas z różnicami jako overlay
-                        diffCanvas.style.position = 'absolute';
-                        diffCanvas.style.top = '0';
-                        diffCanvas.style.left = '0';
-                        diffCanvas.style.width = '100%';
-                        diffCanvas.style.height = '100%';
-                        diffCanvas.style.pointerEvents = 'none';
-                        diffCanvas.style.zIndex = '999';
-                        container.appendChild(diffCanvas);
-                        
-                        // Żółty zakreślacz jest już namalowany BEZPOŚREDNIO w diffCanvas!
-                    }
-                });
+                // Sprawdź, czy canvasy dla tej pary są już w cache
+                if (!ocrResults.has(currentPairIndex)) {
+                    // Jeśli nie, dodaj do kolejki i poczekaj
+                    const loadingIndicator = document.createElement('div');
+                    loadingIndicator.className = 'pixel-diff-loading';
+                    loadingIndicator.textContent = 'Renderowanie w tle...';
+                    container.appendChild(loadingIndicator);
+
+                    enqueuePixelDiffRender(currentPairIndex).then(() => {
+                        loadingIndicator.remove();
+                        recalculatePixelDiff(); // Uruchom ponownie po renderowaniu
+                    });
+                } else {
+                    recalculatePixelDiff();
+                }
             }
             
             return container;
@@ -2595,6 +2617,11 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
         async function prepareCanvasesForPixelDiff(pairIndex) {
             if (pairIndex >= pdfPairs.length) return;
             
+            // Jeśli już mamy dane, nie rób nic
+            if (ocrResults.has(pairIndex)) {
+                return;
+            }
+
             const pair = pdfPairs[pairIndex];
             
             try {
@@ -2602,6 +2629,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                     canvases: []
                 };
                 
+                // Renderuj WSZYSTKIE strony dla danej pary
                 for (let pageNum = 1; pageNum <= pair.totalPages; pageNum++) {
                     const oldCanvas = document.createElement('canvas');
                     const newCanvas = document.createElement('canvas');
@@ -2640,22 +2668,33 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
             }
         }
 
-        async function recalculatePixelDiff(pair, pageNum) {
+        async function recalculatePixelDiff() {
+            const pageNum = currentPageIndex + 1;
             const ocrData = ocrResults.get(currentPairIndex);
-            if (!ocrData || !ocrData.canvases) {
-                return [];
-            }
+            const diffOverlay = document.getElementById('pixelDiffOverlay');
+
+            if (!ocrData || !ocrData.canvases || !diffOverlay) return;
             
             const canvasData = ocrData.canvases.find(c => c.page === pageNum);
-            if (!canvasData) {
-                return [];
-            }
+            if (!canvasData) return;
             
-            return comparePixels(canvasData.oldCanvas, canvasData.newCanvas, pageNum);
+            // Wyczyść poprzedni wynik
+            const diffCtx = diffOverlay.getContext('2d');
+            diffCtx.clearRect(0, 0, diffOverlay.width, diffOverlay.height);
+
+            // Uruchom porównanie, przekazując overlay canvas
+            comparePixels(canvasData.oldCanvas, canvasData.newCanvas, pageNum, diffOverlay);
         }
 
         function clearOCROverlay() {
             document.querySelectorAll('.ocr-overlay').forEach(el => el.remove());
+            
+            // OPTYMALIZACJA: Ukryj i wyczyść dedykowany canvas
+            const diffOverlay = document.getElementById('pixelDiffOverlay');
+            if (diffOverlay) {
+                diffOverlay.style.display = 'none';
+                diffOverlay.getContext('2d').clearRect(0, 0, diffOverlay.width, diffOverlay.height);
+            }
         }
 
         // FIX #3: Add "NO ICAO" group for pairs without ICAO
@@ -3730,7 +3769,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                 
                 zoom = newZoom;
                 
-                scheduleTransform(); // Use throttled version
+                scheduleTransform();
             });
 
             container.addEventListener('mousedown', (e) => {
@@ -3756,7 +3795,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                 panX += rotatedDx;
                 panY += rotatedDy;
                 
-                scheduleTransform(); // Use throttled version instead of immediate
+                scheduleTransform();
                 
                 startX = e.clientX;
                 startY = e.clientY;
@@ -3766,10 +3805,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
                 if (isPanning) {
                     isPanning = false;
                     container.style.cursor = 'grab';
-                    // Clean up will-change after animation stops
-                    setTimeout(() => {
-                        container.style.willChange = 'auto';
-                    }, 500);
                 }
             });
 
@@ -3983,6 +4018,21 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
             // Clear ALL annotation popups from document.body
             document.querySelectorAll('.pdf-annotation-popup').forEach(el => el.remove());
             
+            // OPTYMALIZACJA: Agresywne czyszczenie pamięci
+            // Jawnie zniszcz obiekty PDF, aby zwolnić pamięć
+            pdfPairs.forEach(pair => {
+                if (pair.oldDoc && typeof pair.oldDoc.destroy === 'function') {
+                    pair.oldDoc.destroy();
+                }
+                if (pair.newDoc && typeof pair.newDoc.destroy === 'function') {
+                    pair.newDoc.destroy();
+                }
+            });
+            unpairedOld.forEach(item => item.doc?.destroy());
+            unpairedNew.forEach(item => item.doc?.destroy());
+            pixelDiffRenderQueue = []; // Wyczyść kolejkę renderowania
+            isRenderingQueue = false;
+
             pdfPairs = [];
             unpairedOld = [];
             unpairedNew = [];
